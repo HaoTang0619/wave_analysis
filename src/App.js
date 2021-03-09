@@ -10,6 +10,7 @@ import {
   IconButton,
   Modal,
   Snackbar,
+  Switch,
   Tab,
   Tabs,
   TextField,
@@ -22,6 +23,8 @@ import {
 } from "@material-ui/icons";
 import CSVReader from "react-csv-reader";
 import { CanvasJS, CanvasJSChart } from "canvasjs-react-charts";
+import { fft } from "fft-js";
+import Delay from "react-delay";
 
 import { getCookie, setCookie } from "./cookieHelper";
 
@@ -90,6 +93,9 @@ function App() {
   const [tab, setTab] = useState(0);
   const handleSetTab = (_, newTab) => setTab(newTab);
 
+  const [isFFT, setIsFFT] = useState(false);
+  const handleSetIsFFT = () => setIsFFT((now) => !now);
+
   const [waveInfo, setWaveInfo] = useImmer({
     name: Array.from({ length: 6 }, () => ["", ""]),
     ab: Array.from({ length: 6 }, () => ["", ""]),
@@ -108,6 +114,22 @@ function App() {
     info: null,
     axisX: null,
     ab: Array.from({ length: 6 }, () => ["", ""]),
+    fft_real: Array.from({ length: 6 }, (_, index) => ({
+      dataPoints: [],
+      index,
+      name: "",
+      showInLegend: true,
+      type: "spline",
+      visible: true,
+    })),
+    fft_image: Array.from({ length: 6 }, (_, index) => ({
+      dataPoints: [],
+      index,
+      name: "",
+      showInLegend: true,
+      type: "spline",
+      visible: true,
+    })),
   });
 
   useEffect(() => {
@@ -124,6 +146,8 @@ function App() {
     setFile((f) => {
       waveAnalysisInfo.name.forEach((name, index) => {
         f.data[index].name = name;
+        f.fft_real[index].name = name;
+        f.fft_image[index].name = name;
       });
 
       waveAnalysisInfo.ab.forEach(([a, b], index) => {
@@ -153,12 +177,28 @@ function App() {
                 parseFloat(waveInfo.ab[idx][1]),
             });
 
-            f.data[idx].originalData.push({
-              x: index + 1,
-              y: parseFloat(value),
-            });
+            f.data[idx].originalData.push(parseFloat(value));
           });
         }
+      });
+
+      f.data.forEach((d, idx) => {
+        const slicedData = d.originalData.slice(
+          0,
+          2 ** Math.floor(Math.log2(d.originalData.length))
+        );
+        const fftData = fft(slicedData);
+        fftData.forEach(([real, image], index) => {
+          f.fft_real[idx].dataPoints.push({
+            x: index + 1,
+            y: parseFloat(real),
+          });
+
+          f.fft_image[idx].dataPoints.push({
+            x: index + 1,
+            y: parseFloat(image),
+          });
+        });
       });
 
       f.axisX = {
@@ -194,7 +234,7 @@ function App() {
       f.data.forEach((d, index) => {
         d.dataPoints.forEach((dd, idx) => {
           dd.y =
-            parseFloat(waveInfo.ab[index][0]) * d.originalData[idx].y +
+            parseFloat(waveInfo.ab[index][0]) * d.originalData[idx] +
             parseFloat(waveInfo.ab[index][1]);
         });
       });
@@ -213,9 +253,17 @@ function App() {
       cursor: "pointer",
       itemclick: (event) => {
         const { index } = event.dataSeries;
+        const {
+          chart: { exportFileName },
+        } = event;
+        const which = exportFileName.slice(-2);
 
         setFile((f) => {
-          f.data[index].visible = !f.data[index].visible;
+          if (which === "實部")
+            f.fft_real[index].visible = !f.fft_real[index].visible;
+          else if (which === "虛部")
+            f.fft_image[index].visible = !f.fft_image[index].visible;
+          else f.data[index].visible = !f.data[index].visible;
         });
 
         event.chart.render();
@@ -266,18 +314,75 @@ function App() {
           <SettingsIcon />
         </IconButton>
         {!!file.info && (
-          <CanvasJSChart
-            options={{
-              ...options,
-              axisX: file.axisX,
-              data: file.data,
-              exportFileName: `${file.info.name.replace(
-                /.csv/gi,
-                ""
-              )}-波形分析`,
-              title: { ...options.title, text: `波形分析 - ${file.info.name}` },
-            }}
-          />
+          <>
+            <div style={{ marginBottom: "20px" }}>
+              {isFFT ? "原始資料" : <strong>原始資料</strong>}{" "}
+              <Switch
+                checked={isFFT}
+                onChange={handleSetIsFFT}
+                color="default"
+              />{" "}
+              {isFFT ? <strong>FFT</strong> : "FFT"}{" "}
+            </div>
+            {!isFFT && (
+              <CanvasJSChart
+                options={{
+                  ...options,
+                  axisX: file.axisX,
+                  data: file.data,
+                  exportFileName: `${file.info.name.replace(
+                    /.csv/gi,
+                    ""
+                  )}-波形分析`,
+                  title: {
+                    ...options.title,
+                    text: `波形分析 - ${file.info.name}`,
+                  },
+                }}
+              />
+            )}
+            {isFFT && (
+              <Delay wait={5}>
+                <CanvasJSChart
+                  options={{
+                    ...options,
+                    axisX: file.axisX,
+                    data: file.fft_real,
+                    exportFileName: `${file.info.name.replace(
+                      /.csv/gi,
+                      ""
+                    )}-波形分析 - FFT實部`,
+                    title: {
+                      ...options.title,
+                      text: `波形分析 - FFT實部 - ${file.info.name}`,
+                    },
+                  }}
+                />
+              </Delay>
+            )}
+            {isFFT && (
+              <>
+                <br />
+                <Delay wait={10}>
+                  <CanvasJSChart
+                    options={{
+                      ...options,
+                      axisX: file.axisX,
+                      data: file.fft_image,
+                      exportFileName: `${file.info.name.replace(
+                        /.csv/gi,
+                        ""
+                      )}-波形分析 - FFT虛部`,
+                      title: {
+                        ...options.title,
+                        text: `波形分析 - FFT虛部 - ${file.info.name}`,
+                      },
+                    }}
+                  />
+                </Delay>
+              </>
+            )}
+          </>
         )}
       </MyContainer>
 
